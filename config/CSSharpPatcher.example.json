@@ -21,6 +21,17 @@
         "signature": "E8 ? ? ? ? F3 0F 6F 03 48 83 EC ? 45 31 C9 89 C2 45 31 C0 4C 89 E7",
         "patch": "B8 E9 54 60 BD"
       }
+    },
+    "TeammateCanBlockGrenade": {
+      "module": "server",
+      "windows": {
+        "signature": "75 ? 4C 8B 85 ? ? ? ? 44 8B 9D",
+        "patch": "EB"
+      },
+      "linux": {
+        "signature": "75 ? 8B 8D ? ? ? ? 48 83 C3",
+        "patch": "EB"
+      }
     }
   },
   "EnabledPatches": ["ChangeSubclass", "EmitSoundVolumeFix"],
