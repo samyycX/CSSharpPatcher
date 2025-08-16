@@ -1,7 +1,11 @@
 ﻿using System.Data;
 using System.Runtime.InteropServices;
+using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
+using CounterStrikeSharp.API.Core.Attributes.Registration;
+using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Extensions;
+using CounterStrikeSharp.API.Modules.Memory;
 using Microsoft.Extensions.Logging;
 
 namespace CSSharpPatcher;
@@ -26,17 +30,23 @@ public class PatcherConfig : BasePluginConfig
   public bool RestoreWhenUnload { get; set; } = true;
 }
 
+public record PatchInfo(
+  string Name,
+  nint Addr,
+  List<byte> OriginalBytes
+);
+
 public class CSSharpPatcher : BasePlugin, IPluginConfig<PatcherConfig>
 {
   public override string ModuleName => "CSSharpPatcher";
 
-  public override string ModuleVersion => "1.0.0";
+  public override string ModuleVersion => "1.0.1";
 
   public override string ModuleAuthor => "samyyc";
 
   public PatcherConfig Config { get; set; } = new();
 
-  private Dictionary<nint, List<byte>> _PatchedAddrs = new();
+  private List<PatchInfo> _PatchedPatchs = new();
 
   public void OnConfigParsed(PatcherConfig config)
   {
@@ -52,35 +62,9 @@ public class CSSharpPatcher : BasePlugin, IPluginConfig<PatcherConfig>
   public override void Load(bool hotReload)
   {
     if (hotReload) return;
-    var i = 0;
-    var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
     foreach (var name in Config.EnabledPatches)
     {
-      i++;
-      var patch = Config.Patches[name];
-      var entry = isWindows ? patch.windows : patch.linux;
-      var addr = NativeAPI.FindSignature(GetModulePath(patch.module), entry.signature);
-      if (addr == 0)
-      {
-        Logger.LogError($"[{i}/{Config.Patches.Count()}] Patch '{name}' has invalid signature, skipping...");
-        continue;
-      }
-      var payload = entry.patch.Split(' ', StringSplitOptions.RemoveEmptyEntries)
-                   .Select(hex => Convert.ToByte(hex, 16))
-                   .ToList();
-
-      List<byte> originalBytes = new();
-      MemoryPatch.SetMemAccess(addr, payload.Count());
-      for (int j = 0; j < payload.Count(); j++)
-      {
-        originalBytes.Append(Marshal.ReadByte(addr, j));
-        Marshal.WriteByte(addr, j, payload[j]);
-      }
-
-      _PatchedAddrs[addr] = originalBytes;
-
-      Logger.LogInformation($"[{i}/{Config.Patches.Count()}] Patch '{name}' successfully patched.");
-
+      ApplyPatch(name);
     }
   }
 
@@ -89,13 +73,124 @@ public class CSSharpPatcher : BasePlugin, IPluginConfig<PatcherConfig>
     if (hotReload) return;
     if (!Config.RestoreWhenUnload) return;
 
-    foreach (var (addr, originalBytes) in _PatchedAddrs)
+    foreach (var patch in _PatchedPatchs)
     {
-      MemoryPatch.SetMemAccess(addr, originalBytes.Count());
-      for (int i = 0; i < originalBytes.Count(); i++)
+      RestorePatch(patch);
+    }
+
+    _PatchedPatchs.Clear();
+  }
+
+  public void ApplyPatch(string name)
+  {
+    var isWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+    var patch = Config.Patches[name];
+    var entry = isWindows ? patch.windows : patch.linux;
+    var addr = NativeAPI.FindSignature(GetModulePath(patch.module), entry.signature);
+    if (addr == 0)
+    {
+      Logger.LogError($"Patch '{name}' has invalid signature, skipping...");
+      return;
+    }
+    var payload = entry.patch.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                  .Select(hex => Convert.ToByte(hex, 16))
+                  .ToList();
+
+    List<byte> originalBytes = new();
+    MemoryPatch.SetMemAccess(addr, payload.Count());
+    for (int j = 0; j < payload.Count(); j++)
+    {
+      originalBytes.Add(Marshal.ReadByte(addr, j));
+      Marshal.WriteByte(addr, j, payload[j]);
+    }
+
+    _PatchedPatchs.Add(new(name, addr, originalBytes));
+
+    Logger.LogInformation($"Patch '{name}' successfully patched at 0x{addr:X}.");
+  }
+
+  public void RestorePatch(PatchInfo patch)
+  {
+    MemoryPatch.SetMemAccess(patch.Addr, patch.OriginalBytes.Count());
+    for (int i = 0; i < patch.OriginalBytes.Count(); i++)
+    {
+      Marshal.WriteByte(patch.Addr, i, patch.OriginalBytes[i]);
+    }
+    Logger.LogInformation($"Patch '{patch.Name}' successfully restored.");
+    
+  }
+
+  [ConsoleCommand("css_patcher")]
+  [CommandHelper(minArgs: 1, usage: "patch/restore/status [patch name]", CommandUsage.SERVER_ONLY)]
+  public void PatcherCommand(CCSPlayerController? player, CommandInfo info)
+  {
+
+    void HandleStatusCommand()
+    {
+      Console.WriteLine("====================[ Patcher ]====================");
+      foreach (var (name, p) in Config.Patches)
       {
-        Marshal.WriteByte(addr, i, originalBytes[i]);
+        if (!_PatchedPatchs.Any(patch => patch.Name == name))
+        {
+          Console.WriteLine($"× {name}\t (Unpatched)");
+        }
+        else
+        {
+          var patch = _PatchedPatchs.First(patch => patch.Name == name);
+          Console.WriteLine($"√ {name}\t (0x{patch.Addr:X})");
+        }
       }
+      Console.WriteLine("===================================================");
+    }
+
+    void HandlePatchCommand()
+    {
+      var name = info.GetArg(2);
+      if (_PatchedPatchs.Any(patch => patch.Name == name))
+      {
+        info.ReplyToCommand($"Patch '{name}' has already patched.");
+        return;
+      }
+      if (!Config.Patches.ContainsKey(name))
+      {
+        info.ReplyToCommand($"Cannot find patch '{name}'.");
+        return;
+      }
+      ApplyPatch(name);
+    }
+
+    void HandleRestoreCommand()
+    {
+      var name = info.GetArg(2);
+      if (!_PatchedPatchs.Any(patch => patch.Name == name))
+      {
+        info.ReplyToCommand($"Patch '{name}' is not patched.");
+        return;
+      }
+      if (!Config.Patches.ContainsKey(name))
+      {
+        info.ReplyToCommand($"Cannot find patch '{name}'.");
+        return;
+      }
+      var patch = _PatchedPatchs.First(patch => patch.Name == name);
+      RestorePatch(patch);
+      _PatchedPatchs.Remove(patch);
+    }
+
+    switch (info.GetArg(1))
+    {
+      case "status":
+        HandleStatusCommand();
+        break;
+      case "patch":
+        HandlePatchCommand();
+        break;
+      case "restore":
+        HandleRestoreCommand();
+        break;
+      default:
+        info.ReplyToCommand("Unknown command");
+        break;
     }
   }
 }
