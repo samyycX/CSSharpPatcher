@@ -14,7 +14,7 @@
     "EmitSoundVolumeFix": {
       "module": "server",
       "windows": {
-        "signature": "41 B9 ? ? ? ? 4C 89 64 24 ? 49 8B D5",
+        "signature": "41 B9 ? ? ? ? 48 89 5C 24 ? 49 8B D5",
         "patch": "41 B9 E9 54 60 BD"
       },
       "linux": {
