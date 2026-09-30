@@ -14,7 +14,7 @@
     "EmitSoundVolumeFix": {
       "module": "server",
       "windows": {
-        "signature": "41 B9 ? ? ? ? 48 89 5C 24 ? 49 8B D5",
+        "signature": "41 B9 ? ? ? ? 48 89 5D ? 49 8B D5",
         "patch": "41 B9 E9 54 60 BD"
       },
       "linux": {
@@ -25,16 +25,16 @@
     "TeammateCanBlockGrenade": {
       "module": "server",
       "windows": {
-        "signature": "75 ? 4C 8B 85 ? ? ? ? 44 8B 9D",
-        "patch": "EB"
+        "signature": "0F 85 ? ? ? ? 4C 8B 8D ? ? ? ? 44 8B 9D",
+        "patch": "90 E9"
       },
       "linux": {
-        "signature": "75 ? 8B 8D ? ? ? ? 48 83 C3",
-        "patch": "EB"
+        "signature": "0F 85 ? ? ? ? 8B 8D ? ? ? ? 48 83 C3 01",
+        "patch": "90 E9"
       }
     }
   },
-  "EnabledPatches": ["ChangeSubclass", "EmitSoundVolumeFix"],
+  "EnabledPatches": ["EmitSoundVolumeFix"],
   "RestoreWhenUnload": true,
   "ConfigVersion": 1
 }
